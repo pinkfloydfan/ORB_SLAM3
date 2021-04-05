@@ -34,6 +34,12 @@
 #include"../../../include/System.h"
 #include"../include/ImuTypes.h"
 
+//for pubbing
+#include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/Point.h>
+#include <geometry_msgs/Quaternion.h>
+#include <tf/transform_broadcaster.h>
+
 using namespace std;
 
 class ImuGrabber
@@ -55,11 +61,19 @@ public:
     cv::Mat GetImage(const sensor_msgs::ImageConstPtr &img_msg);
     void SyncWithImu();
 
+    //method for setting ROS publisher
+    void SetPub(ros::Publisher* pub);
+
     queue<sensor_msgs::ImageConstPtr> img0Buf;
     std::mutex mBufMutex;
    
     ORB_SLAM3::System* mpSLAM;
     ImuGrabber *mpImuGb;
+    //additional variables for publishing pose & broadcasting transform - https://roboticsknowledgebase.com/wiki/state-estimation/orb-slam2-setup/
+
+    cv::Mat m1, m2;
+    bool do_rectify, pub_tf, pub_pose;
+    ros::Publisher* orb_pub;
 
     const bool mbClahe;
     cv::Ptr<cv::CLAHE> mClahe = cv::createCLAHE(3.0, cv::Size(8, 8));
@@ -98,11 +112,21 @@ int main(int argc, char **argv)
   ros::Subscriber sub_imu = n.subscribe("/imu", 1000, &ImuGrabber::GrabImu, &imugb); 
   ros::Subscriber sub_img0 = n.subscribe("/camera/image_raw", 100, &ImageGrabber::GrabImage,&igb);
 
+  //create publisher 
+  ros::Publisher pose_pub = n.advertise<geometry_msgs::PoseStamped>("orb_pose", 100);
+  igb.SetPub(&pose_pub);
+
   std::thread sync_thread(&ImageGrabber::SyncWithImu,&igb);
 
   ros::spin();
 
   return 0;
+}
+
+//method for assigning publisher
+void ImageGrabber::SetPub(ros::Publisher* pub)
+{
+  orb_pub = pub;
 }
 
 void ImageGrabber::GrabImage(const sensor_msgs::ImageConstPtr &img_msg)
@@ -175,7 +199,10 @@ void ImageGrabber::SyncWithImu()
       if(mbClahe)
         mClahe->apply(im,im);
 
-      mpSLAM->TrackMonocular(im,tIm,vImuMeas);
+      cv::Mat T_, R_, t_ ;
+      
+      //stores return variable of TrackMonocular
+      T_ = mpSLAM->TrackMonocular(im,tIm,vImuMeas);
     }
 
     std::chrono::milliseconds tSleep(1);
