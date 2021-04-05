@@ -16,6 +16,8 @@
 * If not, see <http://www.gnu.org/licenses/>.
 */
 
+// Minor modifications from https://roboticsknowledgebase.com/wiki/state-estimation/orb-slam2-setup/ to get the package to publish to a ROS topic
+
 #include<iostream>
 #include<algorithm>
 #include<fstream>
@@ -33,6 +35,7 @@
 
 #include"../../../include/System.h"
 #include"../include/ImuTypes.h"
+#include"Converter.h"
 
 //for pubbing
 #include <geometry_msgs/PoseStamped.h>
@@ -200,9 +203,42 @@ void ImageGrabber::SyncWithImu()
         mClahe->apply(im,im);
 
       cv::Mat T_, R_, t_ ;
-      
+
       //stores return variable of TrackMonocular
       T_ = mpSLAM->TrackMonocular(im,tIm,vImuMeas);
+
+      if (T_.empty())
+      return; 
+
+      //aftermarker publish function
+
+      if (pub_tf || pub_pose)
+      {    
+          R_ = T_.rowRange(0,3).colRange(0,3).t();
+          t_ = -R_*T_.rowRange(0,3).col(3);
+          vector<float> q = ORB_SLAM3::Converter::toQuaternion(R_);
+          float scale_factor=1.0;
+          tf::Transform transform;
+          transform.setOrigin(tf::Vector3(t_.at<float>(0, 0)*scale_factor, t_.at<float>(0, 1)*scale_factor, t_.at<float>(0, 2)*scale_factor));
+          tf::Quaternion tf_quaternion(q[0], q[1], q[2], q[3]);
+          transform.setRotation(tf_quaternion);
+
+        if (pub_tf)
+          {
+            static tf::TransformBroadcaster br_;
+            br_.sendTransform(tf::StampedTransform(transform, ros::Time(tIm), "world", "ORB_SLAM3_MONO_INERTIAL"));
+          }
+
+        if (pub_pose)
+          {
+            geometry_msgs::PoseStamped pose;
+            pose.header.stamp = img0Buf.front()->header.stamp;
+            pose.header.frame_id ="ORB_SLAM3_MONO_INERTIAL";
+            tf::poseTFToMsg(transform, pose.pose);
+            orb_pub->publish(pose);
+          }
+        }
+
     }
 
     std::chrono::milliseconds tSleep(1);
