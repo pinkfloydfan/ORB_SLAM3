@@ -28,6 +28,7 @@
 #include<mutex>
 
 #include<ros/ros.h>
+#include<ros/console.h>
 #include<cv_bridge/cv_bridge.h>
 #include<sensor_msgs/Imu.h>
 
@@ -124,6 +125,7 @@ int main(int argc, char **argv)
 
   std::thread sync_thread(&ImageGrabber::SyncWithImu,&igb);
 
+  //  check if this causes crash lol
   ros::spin();
 
   return 0;
@@ -176,7 +178,8 @@ void ImageGrabber::SyncWithImu()
     double tIm = 0;
     if (!img0Buf.empty()&&!mpImuGb->imuBuf.empty())
     {
-      tIm = img0Buf.front()->header.stamp.toSec();
+      ros::Time stamp = img0Buf.front()->header.stamp;
+      tIm = stamp.toSec();
       if(tIm>mpImuGb->imuBuf.back()->header.stamp.toSec())
           continue;
       {
@@ -205,54 +208,41 @@ void ImageGrabber::SyncWithImu()
       if(mbClahe)
         mClahe->apply(im,im);
 
-      cv::Mat T_, R_, t_ ;
 
       //stores return variable of TrackMonocular
-      T_ = mpSLAM->TrackMonocular(im,tIm,vImuMeas);
+      cv::Mat Tcw = mpSLAM->TrackMonocular(im,tIm,vImuMeas);
 
       //this line seems to break things
     
-      
+      if (!(Tcw.empty()))
+      {
+        cv::Size s = Tcw.size();
+        if ((s.height >= 3) && (s.width >= 3)) 
+        {
+          //aftermarket publish function
+          geometry_msgs::PoseStamped pose;
+          pose.header.stamp = ros::Time::now();
+          pose.header.frame_id ="Pose";
 
-      //aftermarket publish function
+          cv::Mat Rwc = Tcw.rowRange(0,3).colRange(0,3).t(); // Rotation information
+          cv::Mat twc = -Rwc*Tcw.rowRange(0,3).col(3); // translation information
+          vector<float> q = ORB_SLAM3::Converter::toQuaternion(Rwc);
 
-      
+          tf::Transform new_transform;
+          new_transform.setOrigin(tf::Vector3(twc.at<float>(0, 0), twc.at<float>(0, 1), twc.at<float>(0, 2)));
 
-      if (pub_tf || pub_pose)
-      {    
-        if (!(T_.empty())) {
+          tf::Quaternion quaternion(q[0], q[1], q[2], q[3]);
+          new_transform.setRotation(quaternion);
 
-          cv::Size s = T_.size();
-          if ((s.height >= 3) && (s.width >= 3)) {
-            R_ = T_.rowRange(0,3).colRange(0,3).t();
-            t_ = -R_*T_.rowRange(0,3).col(3);
-            vector<float> q = ORB_SLAM3::Converter::toQuaternion(R_);
-            float scale_factor=1.0;
-            tf::Transform transform;
-            transform.setOrigin(tf::Vector3(t_.at<float>(0, 0)*scale_factor, t_.at<float>(0, 1)*scale_factor, t_.at<float>(0, 2)*scale_factor));
-            tf::Quaternion tf_quaternion(q[0], q[1], q[2], q[3]);
-            transform.setRotation(tf_quaternion);
-          /*
-          if (pub_tf)
-            {
-              static tf::TransformBroadcaster br_;
-              br_.sendTransform(tf::StampedTransform(transform, ros::Time(tIm), "world", "ORB_SLAM3_MONO_INERTIAL"));
-            }
-
-          */
-
-          if (pub_pose)
-            {
-              geometry_msgs::PoseStamped pose;
-              //pose.header.stamp = img0Buf.front()->header.stamp;
-              pose.header.frame_id ="ORB_SLAM3_MONO_INERTIAL";
-              tf::poseTFToMsg(transform, pose.pose);
-              orb_pub->publish(pose);
-            }
-            
-          }
+          tf::poseTFToMsg(new_transform, pose.pose);
+          orb_pub->publish(pose);
         }
+
       }
+
+
+
+
     }
 
     std::chrono::milliseconds tSleep(1);
