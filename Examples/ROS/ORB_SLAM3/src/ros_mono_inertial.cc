@@ -211,8 +211,6 @@ void ImageGrabber::SyncWithImu()
 
       //stores return variable of TrackMonocular
       cv::Mat Tcw = mpSLAM->TrackMonocular(im,tIm,vImuMeas);
-
-      //this line seems to break things
     
       if (!(Tcw.empty()))
       {
